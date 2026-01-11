@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>MonoNotes - Local Storage Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code&display=swap');
+        
+        :root {
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            transition: background-color 0.3s, color 0.3s; 
+            overscroll-behavior-y: contain; /* Предотвращаем pull-to-refresh в браузере */
+        }
+        .font-mono { font-family: 'Fira Code', monospace !important; }
+        
+        /* Стили тем */
+        .theme-dark { --bg: #000; --sidebar: #0a0a0a; --text: #fff; --text-muted: #9ca3af; --border: #1f2937; --card: #111; --accent: #2563eb; }
+        .theme-light { --bg: #f9fafb; --sidebar: #fff; --text: #111827; --text-muted: #6b7280; --border: #e5e7eb; --card: #fff; --accent: #2563eb; }
+        .theme-retro { --bg: #000; --sidebar: #000; --text: #22c55e; --text-muted: #166534; --border: #14532d; --card: #000; --accent: #166534; }
+
+        body { background-color: var(--bg); color: var(--text); }
+        .sidebar { background-color: var(--sidebar); border-color: var(--border); }
+        .border-theme { border-color: var(--border); }
+        .text-muted { color: var(--text-muted); }
+        .card { background-color: var(--card); border-color: var(--border); }
+        .card:hover { border-color: var(--accent); }
+        
+        input, textarea { 
+            background: transparent; 
+            color: inherit; 
+            outline: none !important; 
+            border: none; 
+            font-size: 16px; /* Предотвращает зум на iOS при фокусе */
+        }
+        
+        textarea { resize: none; }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+
+        /* Анимации */
+        .fade-in { animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Мобильный оверлей */
+        #sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 40;
+            backdrop-filter: blur(2px);
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: -260px;
+                top: 0;
+                bottom: 0;
+                z-index: 50;
+                width: 260px;
+            }
+            .sidebar.open { left: 0; }
+            #sidebar-overlay.open { display: block; }
+            .main-content-area { width: 100%; }
+        }
+
+        .checkbox-custom {
+            width: 22px; /* Чуть больше для тача */
+            height: 22px;
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .checkbox-custom.checked {
+            background-color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        /* Улучшенная прокрутка для iOS */
+        .overflow-y-auto {
+            -webkit-overflow-scrolling: touch;
+        }
+    </style>
+</head>
+<body class="theme-dark h-screen flex overflow-hidden">
+
+    <!-- Оверлей для мобильного сайдбара -->
+    <div id="sidebar-overlay" onclick="toggleSidebar(false)"></div>
+
+    <!-- Сайдбар -->
+    <aside id="sidebar" class="sidebar border-r border-theme flex flex-col shrink-0 transition-all duration-300">
+        <div class="p-4 pt-[calc(1rem+var(--safe-top))] flex flex-col gap-4">
+            <div class="flex justify-between items-center">
+                <h1 id="logo" class="text-xl font-bold tracking-tighter">MonoNotes</h1>
+                <button onclick="toggleLang()" class="p-2 text-[10px] font-bold uppercase hover:opacity-70">
+                    <i class="fa-solid fa-globe mr-1"></i> <span id="lang-label">RU</span>
+                </button>
+            </div>
+            
+            <!-- Поиск -->
+            <div class="relative group">
+                <input type="text" id="search-bar" oninput="handleSearch(this.value)" placeholder="Поиск..." class="search-input w-full bg-gray-500 bg-opacity-5 border border-theme rounded-lg py-2 pl-9 pr-3 text-sm focus:border-blue-500 transition-all">
+                <i class="fa-solid fa-search absolute left-3 top-3 text-xs opacity-40 transition-colors"></i>
+            </div>
+
+            <div class="flex justify-around items-center p-1 bg-gray-500 bg-opacity-5 rounded-xl border border-theme">
+                <button onclick="setTheme('light')" class="p-2.5 rounded-lg hover:bg-white hover:text-blue-600 transition-all"><i class="fa-solid fa-sun text-sm"></i></button>
+                <button onclick="setTheme('dark')" class="p-2.5 rounded-lg hover:bg-zinc-800 transition-all"><i class="fa-solid fa-moon text-sm"></i></button>
+                <button onclick="setTheme('retro')" class="p-2.5 rounded-lg hover:bg-zinc-900 text-green-500 transition-all"><i class="fa-solid fa-terminal text-sm"></i></button>
+            </div>
+        </div>
+
+        <div id="folder-tree" class="flex-1 overflow-y-auto px-4 pb-4 custom-scrollbar space-y-1">
+            <!-- Дерево папок -->
+        </div>
+
+        <!-- Кнопки импорта/экспорта -->
+        <div class="p-4 pb-[calc(1rem+var(--safe-bottom))] border-t border-theme flex flex-col gap-2">
+            <div class="flex justify-between items-center mb-1">
+                <span class="text-[10px] uppercase font-bold opacity-40">Хранилище</span>
+                <span id="storage-status" class="text-[10px] font-mono opacity-40">0%</span>
+            </div>
+            <div class="w-full bg-gray-500 bg-opacity-10 h-1 rounded-full mb-2">
+                <div id="storage-bar" class="bg-blue-500 h-full rounded-full" style="width: 0%"></div>
+            </div>
+
+            <button onclick="handleExport()" class="w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg hover:bg-gray-500 hover:bg-opacity-10 transition-colors">
+                <i class="fa-solid fa-file-export opacity-60"></i>
+                <span id="export-label">Экспорт</span>
+            </button>
+            <button onclick="document.getElementById('import-input').click()" class="w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg hover:bg-gray-500 hover:bg-opacity-10 transition-colors">
+                <i class="fa-solid fa-file-import opacity-60"></i>
+                <span id="import-label">Импорт</span>
+            </button>
+            <input type="file" id="import-input" class="hidden" accept=".json" onchange="handleImport(event)">
+        </div>
+    </aside>
+
+    <!-- Основная область -->
+    <main class="flex-1 flex flex-col h-full overflow-hidden relative main-content-area">
+        <!-- Хедер -->
+        <header class="h-16 mt-[var(--safe-top)] border-b border-theme flex items-center justify-between px-4 sm:px-6 shrink-0">
+            <div class="flex items-center gap-3 sm:gap-4 overflow-hidden">
+                <button onclick="toggleSidebar()" class="p-2 hover:bg-gray-500 hover:bg-opacity-10 rounded-lg shrink-0">
+                    <i id="sidebar-icon" class="fa-solid fa-bars"></i>
+                </button>
+                <nav id="breadcrumbs" class="flex items-center text-xs sm:text-sm truncate font-medium">
+                    <!-- Хлебные крошки -->
+                </nav>
+            </div>
+
+            <div id="action-buttons" class="flex gap-1.5 sm:gap-2">
+                <button id="sort-btn" onclick="toggleSort()" class="p-2 border border-theme rounded-lg hover:bg-gray-500 hover:bg-opacity-10" title="Сортировка">
+                    <i class="fa-solid fa-arrow-down-a-z"></i>
+                </button>
+                <button onclick="createItem('folder')" class="p-2 border border-theme rounded-lg hover:bg-gray-500 hover:bg-opacity-10"><i class="fa-solid fa-folder-plus"></i></button>
+                <button onclick="createItem('file')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 transition-transform active:scale-95 shadow-lg shadow-blue-500/20">
+                    <i class="fa-solid fa-plus"></i> <span id="add-btn-text" class="hidden xs:inline">Заметка</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Контент -->
+        <div id="main-content" class="flex-1 overflow-y-auto p-4 sm:p-6 pb-[calc(1rem+var(--safe-bottom))] custom-scrollbar">
+            <!-- Сетка файлов или редактор -->
+        </div>
+    </main>
+
+    <!-- Модалка удаления -->
+    <div id="delete-modal" class="hidden fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black bg-opacity-80 backdrop-blur-sm p-0 sm:p-4">
+        <div class="max-w-md w-full p-6 sm:rounded-2xl rounded-t-3xl border-t sm:border border-theme bg-zinc-900 fade-in shadow-2xl">
+            <h2 id="modal-title" class="text-2xl font-bold mb-2">Вы уверены?</h2>
+            <p id="modal-desc" class="text-muted mb-6">Это действие нельзя отменить.</p>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button onclick="confirmDelete()" class="w-full py-4 sm:py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold transition-colors order-1 sm:order-2">Удалить</button>
+                <button onclick="closeModal()" class="w-full py-4 sm:py-3 rounded-xl border border-theme hover:bg-white hover:bg-opacity-5 transition-colors order-2 sm:order-1">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Данные и Состояние ---
+        let lang = localStorage.getItem('mono-lang') || 'ru';
+        let theme = localStorage.getItem('mono-theme') || 'dark';
+        let sortMode = 'name';
+        let searchQuery = '';
+        let fs = JSON.parse(localStorage.getItem('mono-fs')) || {
+            id: 'root', name: 'Notes', type: 'folder', children: []
+        };
+        let currentPath = ['root'];
+        let activeNote = null;
+        let deleteTargetId = null;
+        let renamingId = null;
+        let selectedIds = new Set(); 
+
+        const translations = {
+            ru: { 
+                logo: 'MonoNotes', newFolder: 'Новая папка', newNote: 'Заметка.txt', 
+                addNote: 'Заметка', empty: 'Здесь пока пусто', confirmTitle: 'Удалить объект?', 
+                confirmDelete: 'Это действие удалит файл навсегда.', yes: 'Удалить', no: 'Отмена', autoSave: 'Сохранено локально', 
+                chars: 'симв.', objects: 'объектов', placeholder: 'Начните писать...', 
+                titlePlaceholder: 'Название...', export: 'Экспорт', import: 'Импорт', 
+                exportSelected: 'Выбрано', exportAll: 'Все файлы', search: 'Поиск...'
+            },
+            en: { 
+                logo: 'MonoNotes', newFolder: 'New Folder', newNote: 'New Note.txt', 
+                addNote: 'Note', empty: 'Empty here', confirmTitle: 'Are you sure?', 
+                confirmDelete: 'This will delete the item forever.', yes: 'Delete', no: 'Cancel', autoSave: 'Saved locally', 
+                chars: 'chars', objects: 'items', placeholder: 'Start typing...', 
+                titlePlaceholder: 'Title...', export: 'Export', import: 'Import',
+                exportSelected: 'Selected', exportAll: 'All files', search: 'Search...'
+            }
+        };
+
+        function init() {
+            setTheme(theme);
+            updateUI();
+            updateStorageIndicator();
+            
+            // Закрытие сайдбара при изменении размера окна (на десктопе)
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 768) {
+                    toggleSidebar(true);
+                }
+            });
+        }
+
+        function saveToLocal() {
+            localStorage.setItem('mono-fs', JSON.stringify(fs));
+            localStorage.setItem('mono-lang', lang);
+            localStorage.setItem('mono-theme', theme);
+            updateStorageIndicator();
+        }
+
+        function updateStorageIndicator() {
+            const used = JSON.stringify(localStorage).length;
+            const limit = 5 * 1024 * 1024;
+            const percent = Math.min(Math.round((used / limit) * 100), 100);
+            const status = document.getElementById('storage-status');
+            const bar = document.getElementById('storage-bar');
+            if(status) status.innerText = percent + '%';
+            if(bar) bar.style.width = percent + '%';
+        }
+
+        function setTheme(newTheme) {
+            theme = newTheme;
+            document.body.className = `theme-${theme} h-screen flex overflow-hidden`;
+            if(theme === 'retro') document.body.classList.add('font-mono');
+            else document.body.classList.remove('font-mono');
+            saveToLocal();
+        }
+
+        function toggleLang() {
+            lang = lang === 'ru' ? 'en' : 'ru';
+            updateUI();
+            saveToLocal();
+        }
+
+        function handleSearch(val) {
+            searchQuery = val.toLowerCase();
+            updateUI();
+        }
+
+        function toggleSort() {
+            sortMode = sortMode === 'name' ? 'type' : 'name';
+            const icon = document.querySelector('#sort-btn i');
+            if(icon) icon.className = sortMode === 'name' ? 'fa-solid fa-arrow-down-a-z' : 'fa-solid fa-layer-group';
+            updateUI();
+        }
+
+        function toggleSidebar(force) {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            const icon = document.getElementById('sidebar-icon');
+            
+            const isOpen = typeof force === 'boolean' ? force : !sidebar.classList.contains('open');
+            
+            if (isOpen) {
+                sidebar.classList.add('open');
+                overlay.classList.add('open');
+                icon.className = 'fa-solid fa-xmark';
+            } else {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('open');
+                icon.className = 'fa-solid fa-bars';
+            }
+        }
+
+        function handleExport() {
+            const s = translations[lang];
+            let dataToExport;
+            const fileName = `mononotes_${new Date().toISOString().slice(0,10)}.json`;
+
+            if (selectedIds.size > 0) {
+                const folder = getCurrentFolder();
+                dataToExport = folder.children.filter(item => selectedIds.has(item.id));
+            } else {
+                dataToExport = fs;
+            }
+
+            const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            a.click();
+            URL.revokeObjectURL(url);
+            
+            selectedIds.clear();
+            updateUI();
+        }
+
+        function handleImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    if (Array.isArray(importedData)) {
+                        const folder = getCurrentFolder();
+                        folder.children.push(...importedData);
+                    } else if (importedData.id === 'root') {
+                        fs.children.push(...importedData.children);
+                    }
+                    saveToLocal();
+                    updateUI();
+                } catch (err) {
+                    console.error("Import failed:", err);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function getCurrentFolder() {
+            let folder = fs;
+            for (let i = 1; i < currentPath.length; i++) {
+                folder = folder.children.find(c => c.id === currentPath[i]);
+            }
+            return folder;
+        }
+
+        function navigate(path) {
+            currentPath = path;
+            activeNote = null;
+            renamingId = null;
+            selectedIds.clear();
+            if (window.innerWidth <= 768) toggleSidebar(false);
+            updateUI();
+        }
+
+        function createItem(type) {
+            const s = translations[lang];
+            const newItem = {
+                id: 'id-' + Math.random().toString(36).substr(2, 9),
+                name: type === 'folder' ? s.newFolder : s.newNote,
+                type: type,
+                ...(type === 'file' ? { content: '' } : { children: [] })
+            };
+            getCurrentFolder().children.push(newItem);
+            saveToLocal();
+            updateUI();
+        }
+
+        function deleteItem(id) {
+            deleteTargetId = id;
+            const s = translations[lang];
+            document.getElementById('modal-title').innerText = s.confirmTitle;
+            document.getElementById('modal-desc').innerText = s.confirmDelete;
+            document.getElementById('delete-modal').classList.remove('hidden');
+        }
+
+        function confirmDelete() {
+            const findAndRemove = (node) => {
+                if (node.children) {
+                    node.children = node.children.filter(c => c.id !== deleteTargetId);
+                    node.children.forEach(findAndRemove);
+                }
+            };
+            findAndRemove(fs);
+            if (activeNote && activeNote.id === deleteTargetId) activeNote = null;
+            closeModal();
+            saveToLocal();
+            updateUI();
+        }
+
+        function closeModal() {
+            document.getElementById('delete-modal').classList.add('hidden');
+            deleteTargetId = null;
+        }
+
+        function renameItem(id, newName) {
+            const findAndRename = (node) => {
+                if (node.id === id) node.name = newName || 'Unnamed';
+                if (node.children) node.children.forEach(findAndRename);
+            };
+            findAndRename(fs);
+            renamingId = null;
+            saveToLocal();
+            updateUI();
+        }
+
+        function startRename(e, id) {
+            e.stopPropagation();
+            renamingId = id;
+            updateUI();
+        }
+
+        function toggleSelect(e, id) {
+            e.stopPropagation();
+            if (selectedIds.has(id)) selectedIds.delete(id);
+            else selectedIds.add(id);
+            updateUI();
+        }
+
+        function updateUI() {
+            const s = translations[lang];
+            const langLabel = document.getElementById('lang-label');
+            const addBtn = document.getElementById('add-btn-text');
+            const importLabel = document.getElementById('import-label');
+            const searchBar = document.getElementById('search-bar');
+            const exportBtnLabel = document.getElementById('export-label');
+
+            if(langLabel) langLabel.innerText = lang;
+            if(addBtn) addBtn.innerText = s.addNote;
+            if(importLabel) importLabel.innerText = s.import;
+            if(searchBar) searchBar.placeholder = s.search;
+            
+            if (exportBtnLabel) {
+                exportBtnLabel.innerText = selectedIds.size > 0 ? `${s.exportSelected} (${selectedIds.size})` : s.exportAll;
+            }
+            
+            renderBreadcrumbs();
+            renderFolderTree();
+            renderMainContent();
+        }
+
+        function renderBreadcrumbs() {
+            const nav = document.getElementById('breadcrumbs');
+            if(!nav) return;
+            nav.innerHTML = '';
+            let tempPath = ['root'];
+            let current = fs;
+
+            const createCrumb = (node, path) => {
+                const btn = document.createElement('button');
+                btn.className = 'hover:text-blue-500 transition-colors whitespace-nowrap py-1';
+                btn.innerText = node.name;
+                btn.onclick = () => navigate([...path]);
+                nav.appendChild(btn);
+            };
+
+            createCrumb(fs, ['root']);
+
+            for (let i = 1; i < currentPath.length; i++) {
+                nav.innerHTML += '<i class="fa-solid fa-chevron-right mx-1.5 opacity-20 text-[9px]"></i>';
+                current = current.children.find(c => c.id === currentPath[i]);
+                if(!current) break;
+                tempPath.push(current.id);
+                createCrumb(current, [...tempPath]);
+            }
+
+            if (activeNote) {
+                nav.innerHTML += '<i class="fa-solid fa-chevron-right mx-1.5 opacity-20 text-[9px]"></i>';
+                nav.innerHTML += `<span class="opacity-50 italic truncate max-w-[100px] sm:max-w-none">${activeNote.name}</span>`;
+            }
+        }
+
+        function renderFolderTree(node = fs, depth = 0, path = ['root']) {
+            if (depth === 0) document.getElementById('folder-tree').innerHTML = '';
+            if (node.type === 'file') return;
+
+            const container = document.getElementById('folder-tree');
+            const isActive = currentPath[currentPath.length - 1] === node.id;
+            
+            const div = document.createElement('div');
+            div.className = `flex items-center gap-3 py-2 px-3 rounded-xl cursor-pointer text-sm ${isActive ? 'bg-blue-500 bg-opacity-10 text-blue-500 font-bold' : 'hover:bg-gray-500 hover:bg-opacity-5'}`;
+            div.style.paddingLeft = `${depth * 12 + 12}px`;
+            div.innerHTML = `
+                <i class="fa-solid fa-folder ${isActive ? 'text-blue-500' : 'opacity-30'}"></i>
+                <span class="truncate">${node.name}</span>
+            `;
+            div.onclick = () => navigate(path);
+            container.appendChild(div);
+
+            if (node.children) {
+                const folders = node.children.filter(c => c.type === 'folder');
+                folders.sort((a,b) => a.name.localeCompare(b.name));
+                folders.forEach(child => {
+                    renderFolderTree(child, depth + 1, [...path, child.id]);
+                });
+            }
+        }
+
+        function renderMainContent() {
+            const container = document.getElementById('main-content');
+            const s = translations[lang];
+            if(!container) return;
+            container.innerHTML = '';
+
+            if (activeNote) {
+                const editor = document.createElement('div');
+                editor.className = 'max-w-4xl mx-auto h-full flex flex-col fade-in';
+                editor.innerHTML = `
+                    <div class="flex items-start justify-between mb-6 gap-4">
+                        <input id="note-title" type="text" class="text-2xl sm:text-3xl font-bold w-full py-1 border-b border-transparent focus:border-blue-500/30" value="${activeNote.name}" placeholder="${s.titlePlaceholder}">
+                        <button onclick="activeNote=null; updateUI()" class="p-2 -mr-2 opacity-40 hover:opacity-100 transition-opacity"><i class="fa-solid fa-xmark text-xl"></i></button>
+                    </div>
+                    <textarea id="note-body" class="flex-1 w-full text-base sm:text-lg leading-relaxed custom-scrollbar" placeholder="${s.placeholder}">${activeNote.content}</textarea>
+                    <div class="mt-4 pt-4 border-t border-theme flex justify-between items-center text-[10px] uppercase tracking-wider font-bold opacity-40">
+                        <span><i class="fa-solid fa-cloud-arrow-up mr-1"></i> ${s.autoSave}</span>
+                        <span id="char-count">${activeNote.content.length} ${s.chars}</span>
+                    </div>
+                `;
+                container.appendChild(editor);
+
+                const titleInp = document.getElementById('note-title');
+                const bodyInp = document.getElementById('note-body');
+                
+                titleInp.oninput = (e) => {
+                    activeNote.name = e.target.value;
+                    saveToLocal();
+                    renderBreadcrumbs();
+                };
+                bodyInp.oninput = (e) => {
+                    activeNote.content = e.target.value;
+                    const cc = document.getElementById('char-count');
+                    if(cc) cc.innerText = `${e.target.value.length} ${s.chars}`;
+                    saveToLocal();
+                };
+
+            } else {
+                const folder = getCurrentFolder();
+                let displayItems = folder.children;
+
+                if (searchQuery) {
+                    const findRecursive = (items) => {
+                        let found = [];
+                        items.forEach(item => {
+                            if (item.name.toLowerCase().includes(searchQuery) || (item.content && item.content.toLowerCase().includes(searchQuery))) {
+                                found.push(item);
+                            }
+                            if (item.children) found.push(...findRecursive(item.children));
+                        });
+                        return found;
+                    };
+                    displayItems = findRecursive(fs.children);
+                }
+
+                displayItems.sort((a, b) => {
+                    if (sortMode === 'type' && a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+
+                if (displayItems.length === 0) {
+                    container.innerHTML = `<div class="h-full flex flex-col items-center justify-center opacity-10"><i class="fa-solid fa-folder-open text-7xl mb-4"></i><p class="text-xl font-medium italic">${s.empty}</p></div>`;
+                    return;
+                }
+
+                const grid = document.createElement('div');
+                grid.className = 'grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 fade-in';
+                
+                displayItems.forEach(item => {
+                    const isRenaming = renamingId === item.id;
+                    const isSelected = selectedIds.has(item.id);
+                    const card = document.createElement('div');
+                    card.className = `group p-5 rounded-2xl border ${isSelected ? 'border-blue-500 bg-blue-500/5' : 'border-theme'} card cursor-pointer transition-all flex flex-col gap-3 relative`;
+                    
+                    card.innerHTML = `
+                        <div class="flex items-start justify-between">
+                            <div class="flex items-center gap-3">
+                                <div onclick="toggleSelect(event, '${item.id}')" class="checkbox-custom ${isSelected ? 'checked' : ''} ${selectedIds.size > 0 ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'}">
+                                    ${isSelected ? '<i class="fa-solid fa-check text-[10px] text-white"></i>' : ''}
+                                </div>
+                                <i class="fa-solid ${item.type === 'folder' ? 'fa-folder text-blue-500' : 'fa-file-lines opacity-30'} text-xl"></i>
+                            </div>
+                            <div class="flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                <button onclick="startRename(event, '${item.id}')" class="p-1.5 hover:text-blue-500 transition-colors"><i class="fa-solid fa-pen-to-square"></i></button>
+                                <button onclick="event.stopPropagation(); deleteItem('${item.id}')" class="p-1.5 hover:text-red-500 transition-colors"><i class="fa-solid fa-trash-can"></i></button>
+                            </div>
+                        </div>
+                        <div class="mt-1">
+                            ${isRenaming ? 
+                                `<input id="rename-input" class="w-full font-bold text-base bg-blue-500 bg-opacity-10 px-1 rounded border-none" value="${item.name}">` :
+                                `<h3 class="font-bold truncate text-base mb-1">${item.name}</h3>`
+                            }
+                            <p class="text-xs text-muted line-clamp-2 leading-relaxed">
+                                ${item.type === 'folder' ? (item.children.length + ' ' + s.objects) : (item.content || '...')}
+                            </p>
+                        </div>
+                    `;
+
+                    card.onclick = () => {
+                        if (isRenaming) return;
+                        if (item.type === 'folder') navigate([...currentPath, item.id]);
+                        else { activeNote = item; updateUI(); }
+                    };
+
+                    grid.appendChild(card);
+
+                    if (isRenaming) {
+                        const input = card.querySelector('#rename-input');
+                        if(input) {
+                            input.focus();
+                            input.onclick = (e) => e.stopPropagation();
+                            input.onkeydown = (e) => {
+                                if (e.key === 'Enter') renameItem(item.id, e.target.value);
+                                if (e.key === 'Escape') { renamingId = null; updateUI(); }
+                            };
+                            input.onblur = (e) => renameItem(item.id, e.target.value);
+                        }
+                    }
+                });
+                container.appendChild(grid);
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
